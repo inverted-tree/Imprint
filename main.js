@@ -42,11 +42,7 @@ var TemplatePicker = class extends import_obsidian.SuggestModal {
     return this.entries.filter((e) => e.displayName.toLowerCase().includes(lower));
   }
   renderSuggestion(entry, el) {
-    const row = el.createEl("div", { cls: "imprint-suggestion" });
-    row.createEl("span", { text: entry.displayName });
-    if (entry.isRecent) {
-      row.createEl("span", { text: "recent", cls: "imprint-recent-badge" });
-    }
+    el.createEl("div", { text: entry.displayName });
   }
   onChooseSuggestion(entry, _evt) {
     this.onChoose(entry);
@@ -189,9 +185,8 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
         continue;
       const relative = file.path.slice(folder.length + 1);
       const displayName = relative.replace(/\.md$/, "").replace(/\//g, " / ");
-      const isRecent = recents.includes(file.path);
-      const entry = { file, displayName, isRecent };
-      if (isRecent) {
+      const entry = { file, displayName };
+      if (recents.includes(file.path)) {
         recent.push(entry);
       } else {
         rest.push(entry);

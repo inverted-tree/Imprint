@@ -140,9 +140,8 @@ export default class ImprintPlugin extends Plugin {
       if (!file.path.startsWith(folder + '/')) continue;
       const relative = file.path.slice(folder.length + 1);
       const displayName = relative.replace(/\.md$/, '').replace(/\//g, ' / ');
-      const isRecent = recents.includes(file.path);
-      const entry: TemplateEntry = { file, displayName, isRecent };
-      if (isRecent) {
+      const entry: TemplateEntry = { file, displayName };
+      if (recents.includes(file.path)) {
         recent.push(entry);
       } else {
         rest.push(entry);
