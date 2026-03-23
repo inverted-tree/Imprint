@@ -57,6 +57,7 @@ Running **Open template picker** and selecting `book-note` inserts:
 | Placeholder | Behaviour |
 |---|---|
 | `{{Key}}` | Replaced with the matching frontmatter value. Arrays are joined with `, `. Unknown keys are left as-is. |
+| `{{Key:default}}` | Same, but substitutes `default` if the key is absent from the frontmatter. |
 | `{{title}}` | The active note's filename (without `.md`). Overridden by a `title:` frontmatter field. |
 | `{{date}}` | Today's date. Format configurable in settings (default `YYYY-MM-DD`). Overridden by a `date:` frontmatter field. |
 | `{{time}}` | Current time. Format configurable in settings (default `HH:mm`). Overridden by a `time:` frontmatter field. |

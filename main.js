@@ -97,6 +97,15 @@ function formatDate(date, fmt) {
   const hours12 = hours24 % 12 || 12;
   return fmt.replace("YYYY", String(date.getFullYear())).replace("MM", pad(date.getMonth() + 1)).replace("DD", pad(date.getDate())).replace("HH", pad(hours24)).replace("hh", pad(hours12)).replace("mm", pad(date.getMinutes())).replace("ss", pad(date.getSeconds())).replace("A", hours24 < 12 ? "AM" : "PM");
 }
+function parseKey(raw) {
+  const colonIdx = raw.indexOf(":");
+  if (colonIdx === -1)
+    return { key: raw.trim(), defaultValue: null };
+  return {
+    key: raw.slice(0, colonIdx).trimEnd(),
+    defaultValue: raw.slice(colonIdx + 1).trimStart()
+  };
+}
 function splitFrontmatter(content) {
   if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) {
     return { header: "", body: content };
@@ -322,17 +331,23 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
       cursorOffset = cursorIdx;
     }
     content = content.replace(/\[\[{{([^{}]+)}}\]\]/g, (_match, rawKey) => {
-      const key = rawKey.trim();
-      if (!(key in values))
+      const { key, defaultValue } = parseKey(rawKey);
+      if (!(key in values)) {
+        if (defaultValue !== null)
+          return `[[${defaultValue}]]`;
         return `[[{{${key}}}]]`;
+      }
       const value = this.formatValue(values[key]);
       const stripped = value.replace(/^\[\[/, "").replace(/\]\]$/, "");
       return `[[${stripped}]]`;
     });
     content = content.replace(/{{([^{}]+)}}/g, (_match, rawKey) => {
-      const key = rawKey.trim();
-      if (!(key in values))
+      const { key, defaultValue } = parseKey(rawKey);
+      if (!(key in values)) {
+        if (defaultValue !== null)
+          return defaultValue;
         return `{{${key}}}`;
+      }
       return this.formatValue(values[key]);
     });
     return { text: content, cursorOffset };

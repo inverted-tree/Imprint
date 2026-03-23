@@ -26,6 +26,19 @@ function formatDate(date: Date, fmt: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Placeholder parser — splits "Key:default value" into key + optional default
+// ---------------------------------------------------------------------------
+
+function parseKey(raw: string): { key: string; defaultValue: string | null } {
+  const colonIdx = raw.indexOf(':');
+  if (colonIdx === -1) return { key: raw.trim(), defaultValue: null };
+  return {
+    key: raw.slice(0, colonIdx).trimEnd(),
+    defaultValue: raw.slice(colonIdx + 1).trimStart(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Frontmatter splitter — separates the YAML header from the note body
 // ---------------------------------------------------------------------------
 
@@ -320,19 +333,25 @@ export default class ImprintPlugin extends Plugin {
       cursorOffset = cursorIdx;
     }
 
-    // Pass 1: handle [[{{Key}}]] — strip [[ ]] from value when present
+    // Pass 1: handle [[{{Key}}]] and [[{{Key:default}}]] — strip [[ ]] from value when present
     content = content.replace(/\[\[{{([^{}]+)}}\]\]/g, (_match, rawKey) => {
-      const key = rawKey.trim();
-      if (!(key in values)) return `[[{{${key}}}]]`;
+      const { key, defaultValue } = parseKey(rawKey);
+      if (!(key in values)) {
+        if (defaultValue !== null) return `[[${defaultValue}]]`;
+        return `[[{{${key}}}]]`;
+      }
       const value = this.formatValue(values[key]);
       const stripped = value.replace(/^\[\[/, '').replace(/\]\]$/, '');
       return `[[${stripped}]]`;
     });
 
-    // Pass 2: handle remaining {{Key}} placeholders
+    // Pass 2: handle remaining {{Key}} and {{Key:default}} placeholders
     content = content.replace(/{{([^{}]+)}}/g, (_match, rawKey) => {
-      const key = rawKey.trim();
-      if (!(key in values)) return `{{${key}}}`;
+      const { key, defaultValue } = parseKey(rawKey);
+      if (!(key in values)) {
+        if (defaultValue !== null) return defaultValue;
+        return `{{${key}}}`;
+      }
       return this.formatValue(values[key]);
     });
 
