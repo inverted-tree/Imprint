@@ -42,7 +42,11 @@ var TemplatePicker = class extends import_obsidian.SuggestModal {
     return this.entries.filter((e) => e.displayName.toLowerCase().includes(lower));
   }
   renderSuggestion(entry, el) {
-    el.createEl("div", { text: entry.displayName });
+    const row = el.createEl("div", { cls: "imprint-suggestion" });
+    row.createEl("span", { text: entry.displayName });
+    if (entry.isRecent) {
+      row.createEl("span", { text: "recent", cls: "imprint-recent-badge" });
+    }
   }
   onChooseSuggestion(entry, _evt) {
     this.onChoose(entry);
@@ -52,7 +56,10 @@ var TemplatePicker = class extends import_obsidian.SuggestModal {
 // src/settings.ts
 var import_obsidian2 = require("obsidian");
 var DEFAULT_SETTINGS = {
-  templatesFolder: "Templates"
+  templatesFolder: "Templates",
+  dateFormat: "YYYY-MM-DD",
+  timeFormat: "HH:mm",
+  recentTemplates: []
 };
 var ImprintSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
@@ -68,10 +75,50 @@ var ImprintSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian2.Setting(containerEl).setName("Date format").setDesc("Format for {{date}}. Tokens: YYYY MM DD.").addText(
+      (text) => text.setPlaceholder("YYYY-MM-DD").setValue(this.plugin.settings.dateFormat).onChange(async (value) => {
+        this.plugin.settings.dateFormat = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian2.Setting(containerEl).setName("Time format").setDesc("Format for {{time}}. Tokens: HH hh mm ss A.").addText(
+      (text) => text.setPlaceholder("HH:mm").setValue(this.plugin.settings.timeFormat).onChange(async (value) => {
+        this.plugin.settings.timeFormat = value;
+        await this.plugin.saveSettings();
+      })
+    );
   }
 };
 
 // src/main.ts
+function formatDate(date, fmt) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const hours24 = date.getHours();
+  const hours12 = hours24 % 12 || 12;
+  return fmt.replace("YYYY", String(date.getFullYear())).replace("MM", pad(date.getMonth() + 1)).replace("DD", pad(date.getDate())).replace("HH", pad(hours24)).replace("hh", pad(hours12)).replace("mm", pad(date.getMinutes())).replace("ss", pad(date.getSeconds())).replace("A", hours24 < 12 ? "AM" : "PM");
+}
+var NoteNameModal = class extends import_obsidian3.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: "New note name" });
+    const input = contentEl.createEl("input", { type: "text", cls: "imprint-note-name-input" });
+    input.style.width = "100%";
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && input.value.trim()) {
+        this.close();
+        this.onSubmit(input.value.trim());
+      }
+    });
+    setTimeout(() => input.focus(), 50);
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
 var ImprintPlugin = class extends import_obsidian3.Plugin {
   async onload() {
     await this.loadSettings();
@@ -79,7 +126,12 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
     this.addCommand({
       id: "open-template-picker",
       name: "Open template picker",
-      callback: () => this.openPicker()
+      callback: () => this.openPicker((entry) => this.insertTemplate(entry.file))
+    });
+    this.addCommand({
+      id: "create-note-from-template",
+      name: "Create note from template",
+      callback: () => this.openPicker((entry) => this.createNoteFromTemplate(entry.file))
     });
   }
   async loadSettings() {
@@ -88,26 +140,52 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
   }
+  // -------------------------------------------------------------------------
+  // Template entries
+  // -------------------------------------------------------------------------
   getTemplateEntries() {
     const folder = this.settings.templatesFolder.replace(/\/$/, "");
-    const entries = [];
+    const recents = this.settings.recentTemplates;
+    const recent = [];
+    const rest = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (!file.path.startsWith(folder + "/"))
         continue;
       const relative = file.path.slice(folder.length + 1);
       const displayName = relative.replace(/\.md$/, "").replace(/\//g, " / ");
-      entries.push({ file, displayName });
+      const isRecent = recents.includes(file.path);
+      const entry = { file, displayName, isRecent };
+      if (isRecent) {
+        recent.push(entry);
+      } else {
+        rest.push(entry);
+      }
     }
-    return entries.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    recent.sort((a, b) => recents.indexOf(a.file.path) - recents.indexOf(b.file.path));
+    rest.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    return [...recent, ...rest];
   }
-  openPicker() {
+  openPicker(onChoose) {
     const entries = this.getTemplateEntries();
     if (entries.length === 0) {
       new import_obsidian3.Notice("No templates found in folder: " + this.settings.templatesFolder);
       return;
     }
-    new TemplatePicker(this.app, entries, (entry) => this.insertTemplate(entry.file)).open();
+    new TemplatePicker(this.app, entries, onChoose).open();
   }
+  // -------------------------------------------------------------------------
+  // Record recently used
+  // -------------------------------------------------------------------------
+  async recordRecentTemplate(file) {
+    this.settings.recentTemplates = [
+      file.path,
+      ...this.settings.recentTemplates.filter((p) => p !== file.path)
+    ].slice(0, 5);
+    await this.saveSettings();
+  }
+  // -------------------------------------------------------------------------
+  // Insert template at cursor
+  // -------------------------------------------------------------------------
   async insertTemplate(templateFile) {
     var _a, _b;
     const activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
@@ -120,38 +198,100 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
     const now = /* @__PURE__ */ new Date();
     const defaults = {
       title: activeFile ? activeFile.basename : "",
-      date: now.toISOString().slice(0, 10),
-      time: now.toTimeString().slice(0, 5)
+      date: formatDate(now, this.settings.dateFormat),
+      time: formatDate(now, this.settings.timeFormat)
     };
     const values = { ...defaults, ...frontmatter };
     const content = await this.app.vault.read(templateFile);
-    const result = this.substituteContent(content, values);
-    activeView.editor.replaceSelection(result);
+    const { text, cursorOffset } = this.substituteContent(content, values);
+    const editor = activeView.editor;
+    const startPos = editor.getCursor();
+    editor.replaceSelection(text);
+    if (cursorOffset !== null) {
+      const before = text.slice(0, cursorOffset);
+      const lines = before.split("\n");
+      const line = startPos.line + lines.length - 1;
+      const ch = lines.length === 1 ? startPos.ch + lines[0].length : lines[lines.length - 1].length;
+      editor.setCursor({ line, ch });
+    }
+    await this.recordRecentTemplate(templateFile);
   }
+  // -------------------------------------------------------------------------
+  // Create note from template
+  // -------------------------------------------------------------------------
+  createNoteFromTemplate(templateFile) {
+    new NoteNameModal(this.app, async (noteName) => {
+      var _a, _b, _c;
+      const activeFile = (_a = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView)) == null ? void 0 : _a.file;
+      const parentPath = activeFile ? (_c = (_b = activeFile.parent) == null ? void 0 : _b.path) != null ? _c : "" : "";
+      const filePath = parentPath ? `${parentPath}/${noteName}.md` : `${noteName}.md`;
+      let newFile;
+      try {
+        newFile = await this.app.vault.create(filePath, "");
+      } catch (e) {
+        new import_obsidian3.Notice(`Could not create note: ${e}`);
+        return;
+      }
+      await this.app.workspace.getLeaf().openFile(newFile);
+      const newView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
+      if (!newView)
+        return;
+      const now = /* @__PURE__ */ new Date();
+      const values = {
+        title: noteName,
+        date: formatDate(now, this.settings.dateFormat),
+        time: formatDate(now, this.settings.timeFormat)
+      };
+      const content = await this.app.vault.read(templateFile);
+      const { text, cursorOffset } = this.substituteContent(content, values);
+      const editor = newView.editor;
+      const startPos = editor.getCursor();
+      editor.replaceSelection(text);
+      if (cursorOffset !== null) {
+        const before = text.slice(0, cursorOffset);
+        const lines = before.split("\n");
+        const line = startPos.line + lines.length - 1;
+        const ch = lines.length === 1 ? startPos.ch + lines[0].length : lines[lines.length - 1].length;
+        editor.setCursor({ line, ch });
+      }
+      await this.recordRecentTemplate(templateFile);
+    }).open();
+  }
+  // -------------------------------------------------------------------------
+  // Substitution
+  // -------------------------------------------------------------------------
   /**
-   * Replaces {{Key}} placeholders with matching frontmatter values.
+   * Replaces {{Key}} placeholders with matching values.
    *
-   * Special case: if a placeholder is already wrapped in [[ ]] in the template
-   * (e.g. [[{{CoverURL}}]]) and the frontmatter value itself starts/ends with
-   * [[ ]], the inner brackets are stripped so the result stays valid wikilink
-   * syntax.
+   * Returns the substituted text and the character offset of {{cursor}} if
+   * present (null otherwise). {{cursor}} is stripped from the output text.
+   *
+   * Special case: [[{{Key}}]] strips [[ ]] from wikilink-valued fields so the
+   * result stays valid wikilink syntax.
    */
-  substituteContent(content, frontmatter) {
+  substituteContent(content, values) {
+    const cursorPlaceholder = "{{cursor}}";
+    let cursorOffset = null;
+    const cursorIdx = content.indexOf(cursorPlaceholder);
+    if (cursorIdx !== -1) {
+      content = content.slice(0, cursorIdx) + content.slice(cursorIdx + cursorPlaceholder.length);
+      cursorOffset = cursorIdx;
+    }
     content = content.replace(/\[\[{{([^{}]+)}}\]\]/g, (_match, rawKey) => {
       const key = rawKey.trim();
-      if (!(key in frontmatter))
+      if (!(key in values))
         return `[[{{${key}}}]]`;
-      const value = this.formatValue(frontmatter[key]);
+      const value = this.formatValue(values[key]);
       const stripped = value.replace(/^\[\[/, "").replace(/\]\]$/, "");
       return `[[${stripped}]]`;
     });
     content = content.replace(/{{([^{}]+)}}/g, (_match, rawKey) => {
       const key = rawKey.trim();
-      if (!(key in frontmatter))
+      if (!(key in values))
         return `{{${key}}}`;
-      return this.formatValue(frontmatter[key]);
+      return this.formatValue(values[key]);
     });
-    return content;
+    return { text: content, cursorOffset };
   }
   formatValue(value) {
     if (Array.isArray(value))

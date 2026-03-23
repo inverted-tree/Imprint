@@ -3,6 +3,7 @@ import { App, SuggestModal, TFile } from 'obsidian';
 export interface TemplateEntry {
   file: TFile;
   displayName: string;
+  isRecent: boolean;
 }
 
 export class TemplatePicker extends SuggestModal<TemplateEntry> {
@@ -22,7 +23,11 @@ export class TemplatePicker extends SuggestModal<TemplateEntry> {
   }
 
   renderSuggestion(entry: TemplateEntry, el: HTMLElement): void {
-    el.createEl('div', { text: entry.displayName });
+    const row = el.createEl('div', { cls: 'imprint-suggestion' });
+    row.createEl('span', { text: entry.displayName });
+    if (entry.isRecent) {
+      row.createEl('span', { text: 'recent', cls: 'imprint-recent-badge' });
+    }
   }
 
   onChooseSuggestion(entry: TemplateEntry, _evt: MouseEvent | KeyboardEvent): void {

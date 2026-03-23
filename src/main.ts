@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { MarkdownView, Modal, Notice, Plugin, TFile } from 'obsidian';
 import { TemplatePicker, TemplateEntry } from './picker';
 import {
   DEFAULT_SETTINGS,
@@ -6,16 +6,78 @@ import {
   ImprintSettingTab,
 } from './settings';
 
+// ---------------------------------------------------------------------------
+// Date formatter — no external dependencies
+// ---------------------------------------------------------------------------
+
+function formatDate(date: Date, fmt: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hours24 = date.getHours();
+  const hours12 = hours24 % 12 || 12;
+  return fmt
+    .replace('YYYY', String(date.getFullYear()))
+    .replace('MM',   pad(date.getMonth() + 1))
+    .replace('DD',   pad(date.getDate()))
+    .replace('HH',   pad(hours24))
+    .replace('hh',   pad(hours12))
+    .replace('mm',   pad(date.getMinutes()))
+    .replace('ss',   pad(date.getSeconds()))
+    .replace('A',    hours24 < 12 ? 'AM' : 'PM');
+}
+
+// ---------------------------------------------------------------------------
+// NoteNameModal — prompts for a new note's filename
+// ---------------------------------------------------------------------------
+
+class NoteNameModal extends Modal {
+  private onSubmit: (name: string) => void;
+
+  constructor(app: InstanceType<typeof Plugin>['app'], onSubmit: (name: string) => void) {
+    super(app);
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: 'New note name' });
+    const input = contentEl.createEl('input', { type: 'text', cls: 'imprint-note-name-input' });
+    input.style.width = '100%';
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && input.value.trim()) {
+        this.close();
+        this.onSubmit(input.value.trim());
+      }
+    });
+    // Focus after the modal animation settles
+    setTimeout(() => input.focus(), 50);
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main plugin
+// ---------------------------------------------------------------------------
+
 export default class ImprintPlugin extends Plugin {
   settings: ImprintSettings;
 
   async onload() {
     await this.loadSettings();
     this.addSettingTab(new ImprintSettingTab(this.app, this));
+
     this.addCommand({
       id: 'open-template-picker',
       name: 'Open template picker',
-      callback: () => this.openPicker(),
+      callback: () => this.openPicker((entry) => this.insertTemplate(entry.file)),
+    });
+
+    this.addCommand({
+      id: 'create-note-from-template',
+      name: 'Create note from template',
+      callback: () => this.openPicker((entry) => this.createNoteFromTemplate(entry.file)),
     });
   }
 
@@ -27,30 +89,60 @@ export default class ImprintPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  // -------------------------------------------------------------------------
+  // Template entries
+  // -------------------------------------------------------------------------
+
   private getTemplateEntries(): TemplateEntry[] {
     const folder = this.settings.templatesFolder.replace(/\/$/, '');
-    const entries: TemplateEntry[] = [];
+    const recents = this.settings.recentTemplates;
+    const recent: TemplateEntry[] = [];
+    const rest: TemplateEntry[] = [];
 
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (!file.path.startsWith(folder + '/')) continue;
-      // relative path inside the templates folder, without the leading folder/
       const relative = file.path.slice(folder.length + 1);
-      // Replace path separators with " / " and strip .md extension
       const displayName = relative.replace(/\.md$/, '').replace(/\//g, ' / ');
-      entries.push({ file, displayName });
+      const isRecent = recents.includes(file.path);
+      const entry: TemplateEntry = { file, displayName, isRecent };
+      if (isRecent) {
+        recent.push(entry);
+      } else {
+        rest.push(entry);
+      }
     }
 
-    return entries.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    // Sort recents by recency order, rest alphabetically
+    recent.sort((a, b) => recents.indexOf(a.file.path) - recents.indexOf(b.file.path));
+    rest.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    return [...recent, ...rest];
   }
 
-  private openPicker() {
+  private openPicker(onChoose: (entry: TemplateEntry) => void) {
     const entries = this.getTemplateEntries();
     if (entries.length === 0) {
       new Notice('No templates found in folder: ' + this.settings.templatesFolder);
       return;
     }
-    new TemplatePicker(this.app, entries, (entry) => this.insertTemplate(entry.file)).open();
+    new TemplatePicker(this.app, entries, onChoose).open();
   }
+
+  // -------------------------------------------------------------------------
+  // Record recently used
+  // -------------------------------------------------------------------------
+
+  private async recordRecentTemplate(file: TFile) {
+    this.settings.recentTemplates = [
+      file.path,
+      ...this.settings.recentTemplates.filter(p => p !== file.path),
+    ].slice(0, 5);
+    await this.saveSettings();
+  }
+
+  // -------------------------------------------------------------------------
+  // Insert template at cursor
+  // -------------------------------------------------------------------------
 
   private async insertTemplate(templateFile: TFile) {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -67,35 +159,116 @@ export default class ImprintPlugin extends Plugin {
     const now = new Date();
     const defaults: Record<string, string> = {
       title: activeFile ? activeFile.basename : '',
-      date: now.toISOString().slice(0, 10),
-      time: now.toTimeString().slice(0, 5),
+      date: formatDate(now, this.settings.dateFormat),
+      time: formatDate(now, this.settings.timeFormat),
     };
 
-    // Merge: defaults provide fallbacks; frontmatter values take precedence
     const values: Record<string, unknown> = { ...defaults, ...frontmatter };
-
     const content = await this.app.vault.read(templateFile);
-    const result = this.substituteContent(content, values);
-    activeView.editor.replaceSelection(result);
+    const { text, cursorOffset } = this.substituteContent(content, values);
+
+    const editor = activeView.editor;
+    const startPos = editor.getCursor();
+    editor.replaceSelection(text);
+
+    if (cursorOffset !== null) {
+      const before = text.slice(0, cursorOffset);
+      const lines = before.split('\n');
+      const line = startPos.line + lines.length - 1;
+      const ch = lines.length === 1
+        ? startPos.ch + lines[0].length
+        : lines[lines.length - 1].length;
+      editor.setCursor({ line, ch });
+    }
+
+    await this.recordRecentTemplate(templateFile);
   }
 
+  // -------------------------------------------------------------------------
+  // Create note from template
+  // -------------------------------------------------------------------------
+
+  private createNoteFromTemplate(templateFile: TFile) {
+    new NoteNameModal(this.app, async (noteName) => {
+      // Determine parent folder from active file, fallback to vault root
+      const activeFile = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
+      const parentPath = activeFile
+        ? activeFile.parent?.path ?? ''
+        : '';
+      const filePath = parentPath ? `${parentPath}/${noteName}.md` : `${noteName}.md`;
+
+      let newFile: TFile;
+      try {
+        newFile = await this.app.vault.create(filePath, '');
+      } catch (e) {
+        new Notice(`Could not create note: ${e}`);
+        return;
+      }
+
+      await this.app.workspace.getLeaf().openFile(newFile);
+
+      const newView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!newView) return;
+
+      const now = new Date();
+      const values: Record<string, unknown> = {
+        title: noteName,
+        date: formatDate(now, this.settings.dateFormat),
+        time: formatDate(now, this.settings.timeFormat),
+      };
+
+      const content = await this.app.vault.read(templateFile);
+      const { text, cursorOffset } = this.substituteContent(content, values);
+
+      const editor = newView.editor;
+      const startPos = editor.getCursor();
+      editor.replaceSelection(text);
+
+      if (cursorOffset !== null) {
+        const before = text.slice(0, cursorOffset);
+        const lines = before.split('\n');
+        const line = startPos.line + lines.length - 1;
+        const ch = lines.length === 1
+          ? startPos.ch + lines[0].length
+          : lines[lines.length - 1].length;
+        editor.setCursor({ line, ch });
+      }
+
+      await this.recordRecentTemplate(templateFile);
+    }).open();
+  }
+
+  // -------------------------------------------------------------------------
+  // Substitution
+  // -------------------------------------------------------------------------
+
   /**
-   * Replaces {{Key}} placeholders with matching frontmatter values.
+   * Replaces {{Key}} placeholders with matching values.
    *
-   * Special case: if a placeholder is already wrapped in [[ ]] in the template
-   * (e.g. [[{{CoverURL}}]]) and the frontmatter value itself starts/ends with
-   * [[ ]], the inner brackets are stripped so the result stays valid wikilink
-   * syntax.
+   * Returns the substituted text and the character offset of {{cursor}} if
+   * present (null otherwise). {{cursor}} is stripped from the output text.
+   *
+   * Special case: [[{{Key}}]] strips [[ ]] from wikilink-valued fields so the
+   * result stays valid wikilink syntax.
    */
   private substituteContent(
     content: string,
-    frontmatter: Record<string, unknown>
-  ): string {
+    values: Record<string, unknown>
+  ): { text: string; cursorOffset: number | null } {
+    // Extract {{cursor}} position before any other substitution
+    const cursorPlaceholder = '{{cursor}}';
+    let cursorOffset: number | null = null;
+    const cursorIdx = content.indexOf(cursorPlaceholder);
+    if (cursorIdx !== -1) {
+      content = content.slice(0, cursorIdx) + content.slice(cursorIdx + cursorPlaceholder.length);
+      cursorOffset = cursorIdx;
+    }
+
     // Pass 1: handle [[{{Key}}]] — strip [[ ]] from value when present
     content = content.replace(/\[\[{{([^{}]+)}}\]\]/g, (_match, rawKey) => {
       const key = rawKey.trim();
-      if (!(key in frontmatter)) return `[[{{${key}}}]]`;
-      const value = this.formatValue(frontmatter[key]);
+      if (!(key in values)) return `[[{{${key}}}]]`;
+      const value = this.formatValue(values[key]);
       const stripped = value.replace(/^\[\[/, '').replace(/\]\]$/, '');
       return `[[${stripped}]]`;
     });
@@ -103,11 +276,11 @@ export default class ImprintPlugin extends Plugin {
     // Pass 2: handle remaining {{Key}} placeholders
     content = content.replace(/{{([^{}]+)}}/g, (_match, rawKey) => {
       const key = rawKey.trim();
-      if (!(key in frontmatter)) return `{{${key}}}`;
-      return this.formatValue(frontmatter[key]);
+      if (!(key in values)) return `{{${key}}}`;
+      return this.formatValue(values[key]);
     });
 
-    return content;
+    return { text: content, cursorOffset };
   }
 
   private formatValue(value: unknown): string {
