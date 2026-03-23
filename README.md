@@ -1,6 +1,8 @@
-# Imprint
+<div align="center">
+    <h1>Imprint</h1>
+</div>
 
-A deliberately simple Obsidian plugin that inserts templates with `{{Key}}` placeholder substitution drawn from the active note's YAML frontmatter.
+A deliberately simple [Obsidian](https://obsidian.md/) plugin that inserts templates with `{{Key}}` placeholder substitution drawn from the active note's YAML frontmatter.
 
 Imprint is intentionally minimal. It replaces the built-in Templates plugin, which only offers a minimal set of substitutions (namely `{{date}}`, `{{time}}`, and `{{title}}`).
 
