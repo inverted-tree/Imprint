@@ -1,0 +1,9 @@
+{
+  "id": "imprint",
+  "name": "Imprint",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Insert templates with {{Key}} substitution from the active note's frontmatter.",
+  "author": "",
+  "isDesktopOnly": false
+}
