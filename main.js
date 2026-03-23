@@ -59,6 +59,7 @@ var DEFAULT_SETTINGS = {
   templatesFolder: "Templates",
   dateFormat: "YYYY-MM-DD",
   timeFormat: "HH:mm",
+  listFormat: "comma",
   recentTemplates: []
 };
 var ImprintSettingTab = class extends import_obsidian2.PluginSettingTab {
@@ -84,6 +85,12 @@ var ImprintSettingTab = class extends import_obsidian2.PluginSettingTab {
     new import_obsidian2.Setting(containerEl).setName("Time format").setDesc("Format for {{time}}. Tokens: HH hh mm ss A.").addText(
       (text) => text.setPlaceholder("HH:mm").setValue(this.plugin.settings.timeFormat).onChange(async (value) => {
         this.plugin.settings.timeFormat = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian2.Setting(containerEl).setName("List format").setDesc("How frontmatter arrays are inserted into templates.").addDropdown(
+      (drop) => drop.addOption("comma", "Comma separated (value1, value2)").addOption("markdown", "Markdown list (- value1\\n- value2)").setValue(this.plugin.settings.listFormat).onChange(async (value) => {
+        this.plugin.settings.listFormat = value;
         await this.plugin.saveSettings();
       })
     );
@@ -353,8 +360,9 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
     return { text: content, cursorOffset };
   }
   formatValue(value) {
-    if (Array.isArray(value))
-      return value.join(", ");
+    if (Array.isArray(value)) {
+      return this.settings.listFormat === "markdown" ? value.map((v) => `- ${v}`).join("\n") : value.join(", ");
+    }
     if (value === null || value === void 0)
       return "";
     return String(value);

@@ -58,7 +58,7 @@ Running **Open template picker** and selecting `book-note` inserts:
 
 | Placeholder | Behaviour |
 |---|---|
-| `{{Key}}` | Replaced with the matching frontmatter value. Arrays are joined with `, `. Unknown keys are left as-is. |
+| `{{Key}}` | Replaced with the matching frontmatter value. Arrays are formatted according to the **List format** setting. Unknown keys are left as-is. |
 | `{{Key:default}}` | Same, but substitutes `default` if the key is absent from the frontmatter. |
 | `{{title}}` | The active note's filename (without `.md`). Overridden by a `title:` frontmatter field. |
 | `{{date}}` | Today's date. Format configurable in settings (default `YYYY-MM-DD`). Overridden by a `date:` frontmatter field. |
@@ -94,4 +94,5 @@ Assign a hotkey to this under **Settings → Hotkeys → Imprint: Fill template 
 | Templates folder | `Templates` | Path relative to vault root where template files live. |
 | Date format | `YYYY-MM-DD` | Format string for `{{date}}`. |
 | Time format | `HH:mm` | Format string for `{{time}}`. |
+| List format | Comma separated | How frontmatter arrays are inserted: `value1, value2` or `- value1\n- value2`. |
 

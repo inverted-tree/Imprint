@@ -5,6 +5,7 @@ export interface ImprintSettings {
   templatesFolder: string;
   dateFormat: string;
   timeFormat: string;
+  listFormat: 'comma' | 'markdown';
   recentTemplates: string[];
 }
 
@@ -12,6 +13,7 @@ export const DEFAULT_SETTINGS: ImprintSettings = {
   templatesFolder: 'Templates',
   dateFormat: 'YYYY-MM-DD',
   timeFormat: 'HH:mm',
+  listFormat: 'comma',
   recentTemplates: [],
 };
 
@@ -59,6 +61,19 @@ export class ImprintSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.timeFormat)
           .onChange(async (value) => {
             this.plugin.settings.timeFormat = value;
+            await this.plugin.saveSettings();
+          })
+      );
+    new Setting(containerEl)
+      .setName('List format')
+      .setDesc('How frontmatter arrays are inserted into templates.')
+      .addDropdown(drop =>
+        drop
+          .addOption('comma', 'Comma separated (value1, value2)')
+          .addOption('markdown', 'Markdown list (- value1\\n- value2)')
+          .setValue(this.plugin.settings.listFormat)
+          .onChange(async (value: string) => {
+            this.plugin.settings.listFormat = value as 'comma' | 'markdown';
             await this.plugin.saveSettings();
           })
       );
