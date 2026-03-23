@@ -93,7 +93,7 @@ class NoteNameModal extends Modal {
 // ---------------------------------------------------------------------------
 
 export default class ImprintPlugin extends Plugin {
-  settings: ImprintSettings;
+  settings!: ImprintSettings;
 
   async onload() {
     await this.loadSettings();
