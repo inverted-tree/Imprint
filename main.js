@@ -97,6 +97,21 @@ function formatDate(date, fmt) {
   const hours12 = hours24 % 12 || 12;
   return fmt.replace("YYYY", String(date.getFullYear())).replace("MM", pad(date.getMonth() + 1)).replace("DD", pad(date.getDate())).replace("HH", pad(hours24)).replace("hh", pad(hours12)).replace("mm", pad(date.getMinutes())).replace("ss", pad(date.getSeconds())).replace("A", hours24 < 12 ? "AM" : "PM");
 }
+function splitFrontmatter(content) {
+  if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) {
+    return { header: "", body: content };
+  }
+  const closeIdx = content.indexOf("\n---", 4);
+  if (closeIdx === -1)
+    return { header: "", body: content };
+  const bodyStart = content.indexOf("\n", closeIdx + 4);
+  if (bodyStart === -1)
+    return { header: content, body: "" };
+  return {
+    header: content.slice(0, bodyStart + 1),
+    body: content.slice(bodyStart + 1)
+  };
+}
 var NoteNameModal = class extends import_obsidian3.Modal {
   constructor(app, onSubmit) {
     super(app);
@@ -132,6 +147,11 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
       id: "create-note-from-template",
       name: "Create note from template",
       callback: () => this.openPicker((entry) => this.createNoteFromTemplate(entry.file))
+    });
+    this.addCommand({
+      id: "fill-template-fields",
+      name: "Fill template fields",
+      editorCallback: (editor, view) => this.fillTemplateFields(editor, view.file)
     });
   }
   async loadSettings() {
@@ -256,6 +276,30 @@ var ImprintPlugin = class extends import_obsidian3.Plugin {
       }
       await this.recordRecentTemplate(templateFile);
     }).open();
+  }
+  // -------------------------------------------------------------------------
+  // Fill template fields in the current note
+  // -------------------------------------------------------------------------
+  fillTemplateFields(editor, file) {
+    var _a, _b;
+    const frontmatter = file ? (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {} : {};
+    const now = /* @__PURE__ */ new Date();
+    const defaults = {
+      title: file ? file.basename : "",
+      date: formatDate(now, this.settings.dateFormat),
+      time: formatDate(now, this.settings.timeFormat)
+    };
+    const values = { ...defaults, ...frontmatter };
+    const full = editor.getValue();
+    const { header, body } = splitFrontmatter(full);
+    const { text: newBody } = this.substituteContent(body, values);
+    if (newBody === body) {
+      new import_obsidian3.Notice("No template fields to fill.");
+      return;
+    }
+    const cursor = editor.getCursor();
+    editor.setValue(header + newBody);
+    editor.setCursor(cursor);
   }
   // -------------------------------------------------------------------------
   // Substitution

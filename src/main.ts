@@ -1,4 +1,4 @@
-import { MarkdownView, Modal, Notice, Plugin, TFile } from 'obsidian';
+import { Editor, MarkdownView, Modal, Notice, Plugin, TFile } from 'obsidian';
 import { TemplatePicker, TemplateEntry } from './picker';
 import {
   DEFAULT_SETTINGS,
@@ -23,6 +23,24 @@ function formatDate(date: Date, fmt: string): string {
     .replace('mm',   pad(date.getMinutes()))
     .replace('ss',   pad(date.getSeconds()))
     .replace('A',    hours24 < 12 ? 'AM' : 'PM');
+}
+
+// ---------------------------------------------------------------------------
+// Frontmatter splitter — separates the YAML header from the note body
+// ---------------------------------------------------------------------------
+
+function splitFrontmatter(content: string): { header: string; body: string } {
+  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
+    return { header: '', body: content };
+  }
+  const closeIdx = content.indexOf('\n---', 4);
+  if (closeIdx === -1) return { header: '', body: content };
+  const bodyStart = content.indexOf('\n', closeIdx + 4);
+  if (bodyStart === -1) return { header: content, body: '' };
+  return {
+    header: content.slice(0, bodyStart + 1),
+    body: content.slice(bodyStart + 1),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +96,12 @@ export default class ImprintPlugin extends Plugin {
       id: 'create-note-from-template',
       name: 'Create note from template',
       callback: () => this.openPicker((entry) => this.createNoteFromTemplate(entry.file)),
+    });
+
+    this.addCommand({
+      id: 'fill-template-fields',
+      name: 'Fill template fields',
+      editorCallback: (editor, view) => this.fillTemplateFields(editor, view.file),
     });
   }
 
@@ -236,6 +260,38 @@ export default class ImprintPlugin extends Plugin {
 
       await this.recordRecentTemplate(templateFile);
     }).open();
+  }
+
+  // -------------------------------------------------------------------------
+  // Fill template fields in the current note
+  // -------------------------------------------------------------------------
+
+  private fillTemplateFields(editor: Editor, file: TFile | null) {
+    const frontmatter: Record<string, unknown> = file
+      ? (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {})
+      : {};
+
+    const now = new Date();
+    const defaults: Record<string, string> = {
+      title: file ? file.basename : '',
+      date: formatDate(now, this.settings.dateFormat),
+      time: formatDate(now, this.settings.timeFormat),
+    };
+    const values: Record<string, unknown> = { ...defaults, ...frontmatter };
+
+    // Split off the YAML frontmatter block so we don't mangle it
+    const full = editor.getValue();
+    const { header, body } = splitFrontmatter(full);
+
+    const { text: newBody } = this.substituteContent(body, values);
+    if (newBody === body) {
+      new Notice('No template fields to fill.');
+      return;
+    }
+
+    const cursor = editor.getCursor();
+    editor.setValue(header + newBody);
+    editor.setCursor(cursor);
   }
 
   // -------------------------------------------------------------------------
